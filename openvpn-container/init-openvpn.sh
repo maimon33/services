@@ -65,29 +65,6 @@ define_iptables () {
 
 	# Forward everything
 	iptables -A FORWARD -j ACCEPT
-	# Initialiaze all the chains by removing all the rules tied to them
-	# iptables --flush
-	# iptables -t nat --flush
-	# iptables -t mangle --flush
-
-	# Delete user defined chains
-	# iptables --delete-chain
-	# iptables -t nat --delete-chain
-	# iptables -t mangle --delete-chain
-
-	# Set default policy
-	# iptables --policy INPUT DROP
-	# iptables --policy OUTPUT ACCEPT
-	# iptables --policy FORWARD DROP
-	# iptables -t nat --policy POSTROUTING ACCEPT
-	# iptables -t nat --policy PREROUTING ACCEPT
-
-	# Loop back accepts all traffic
-	# iptables -A INPUT -i lo -j ACCEPT
-	# iptables -A OUTPUT -o lo -j ACCEPT
-
-	# Define user chains
-	# iptables -N User-Firewall
 	
 	# Allow bidirectional traffic to internal network
 	iptables -A INPUT -p all -s 192.168.0.0/24 -j ACCEPT
@@ -109,11 +86,6 @@ if [[ ! -e /etc/openvpn/server/server.conf ]]; then
 	echo 'Welcome to this OpenVPN road warrior installer!'
 	# If system has a single IPv4, it is selected automatically. Else, ask the user
 	ip=$(ip -4 addr | grep inet | grep -vE '127(\.[0-9]{1,3}){3}' | cut -d '/' -f 1 | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}')
-
-	# If firewalld was just installed, enable it
-	#if [[ "$firewall" == "firewalld" ]]; then
-	#	systemctl enable --now firewalld.service
-	#fi
 
 	# Get easy-rsa
 	easy_rsa_url='https://github.com/OpenVPN/easy-rsa/releases/download/v3.0.7/EasyRSA-3.0.7.tgz'
@@ -186,34 +158,6 @@ crl-verify $conf_dir/crl.pem" >> /etc/openvpn/server/server.conf
 	echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/30-openvpn-forward.conf
 
 	define_iptables
-	# firewall-cmd --add-port="$port"/"$protocol"
-	# iptables -A INPUT -p $protocol --dport $port -j ACCEPTp
-	# TODO: add local subnet
-	# firewall-cmd --zone=trusted --add-source=10.8.0.0/24
-
-	# firewall-cmd --permanent --add-port="$port"/"$protocol"
-	# firewall-cmd --permanent --zone=trusted --add-source=10.8.0.0/24
-	# Set NAT for the VPN subnet
-	# TODO: add avoid NAT rules
-	# firewall-cmd --direct --add-rule ipv4 nat POSTROUTING 0 -s 10.8.0.0/24 ! -d 10.8.0.0/24 -j SNAT --to "$ip"
-
-	# firewall-cmd --permanent --direct --add-rule ipv4 nat POSTROUTING 0 -s 10.8.0.0/24 ! -d 10.8.0.0/24 -j SNAT --to "$ip"
-
-	# If SELinux is enabled and a custom port was selected, we need this
-
-	# if sestatus 2>/dev/null | grep "Current mode" | grep -q "enforcing" && [[ "$port" != 1194 ]]; then
-	# 	# Install semanage if not already present
-	# 	if ! hash semanage 2>/dev/null; then
-	# 		if [[ "$os_version" -eq 7 ]]; then
-	# 			# Centos 7
-	# 			yum install -y policycoreutils-python
-	# 		else
-	# 			# CentOS 8 or Fedora
-	# 			dnf install -y policycoreutils-python-utils
-	# 		fi
-	# 	fi
-	# 	semanage port -a -t openvpn_port_t -p "$protocol" "$port"
-	# fi
 
 	# If the server is behind NAT, use the correct IP address
 	[[ -n "$public_ip" ]] && ip="$public_ip"
