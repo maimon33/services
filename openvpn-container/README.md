@@ -9,6 +9,8 @@ Run output generates two elements:
 
 ## Run
 * Windows
+
 `docker run -d -v %cd%:/etc/openvpn -e NETWORK="192.168.0.0/24" -p 1194:1194/udp --privileged --restart on-failure openvpn-container`
 * Linux\OSX
+
 `docker run -d -v ${pwd}:/etc/openvpn -e NETWORK="192.168.0.0/24" -p 1194:1194/udp --privileged --restart on-failure openvpn-container`
