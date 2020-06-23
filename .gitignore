@@ -52,3 +52,4 @@ openvpn-container/server/server.conf
 openvpn-container/server/server.crt
 openvpn-container/server/server.key
 openvpn-container/server/tc.key
+*.pem
