@@ -1,5 +1,7 @@
 FROM ubuntu:20.04
 
+ENV NETWORK=""
+
 RUN apt update \
 	&& apt install iproute2 wget curl openvpn openssl ca-certificates iptables -y
 

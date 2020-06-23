@@ -31,6 +31,11 @@ TUN needs to be enabled before running this installer."
 	exit
 fi
 
+if [ -z "$NETWORK" ]; then
+	echo "Must speficy Local LAN Netwrok using 'NETWORK' env"
+	exit
+fi
+
 new_client () {
 	# Generates the custom client.ovpn
 	{
@@ -67,13 +72,12 @@ define_iptables () {
 	iptables -A FORWARD -j ACCEPT
 	
 	# Allow bidirectional traffic to internal network
-	iptables -A INPUT -p all -s 192.168.0.0/24 -j ACCEPT
-	iptables -A INPUT -p all -s 172.17.0.0/24 -j ACCEPT
+	iptables -A INPUT -p all -s $NETWORK -j ACCEPT
 	iptables -A INPUT -p all -s 10.8.0.0/24 -j ACCEPT
 
 	# VPN
 	## Allow traffic initiated from VPN to access LAN
-	iptables -A FORWARD -i tun0 -s 10.8.0.0/24 -d 192.168.0.0/24 -m conntrack --ctstate NEW -j ACCEPT
+	iptables -A FORWARD -i tun0 -s 10.8.0.0/24 -d $NETWORK -m conntrack --ctstate NEW -j ACCEPT
 	## Allow established traffic to pass back and forth
 	iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 
@@ -86,6 +90,8 @@ if [[ ! -e /etc/openvpn/server/server.conf ]]; then
 	echo 'Welcome to this OpenVPN road warrior installer!'
 	# If system has a single IPv4, it is selected automatically. Else, ask the user
 	ip=$(ip -4 addr | grep inet | grep -vE '127(\.[0-9]{1,3}){3}' | cut -d '/' -f 1 | grep -oE '[0-9]{1,3}(\.[0-9]{1,3}){3}')
+	network=$(echo "${IP%.*}.0")
+	subnet_mask=$(ip -4 addr | grep inet | grep -vE '127(\.[0-9]{1,3}){3}' | cut -d '/' -f 2 | cut -d " " -f 1)
 
 	# Get easy-rsa
 	easy_rsa_url='https://github.com/OpenVPN/easy-rsa/releases/download/v3.0.7/EasyRSA-3.0.7.tgz'
