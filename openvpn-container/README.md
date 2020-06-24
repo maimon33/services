@@ -7,6 +7,11 @@ Run output generates two elements:
 * Server configuration folder based on current working directory
 * client configuration file. AKA client.ovpn
 
+## Build
+Clone repo and build using tag `openvpn-container`
+
+`docker build . -t openvpn-container`
+
 ## Run
 * Windows
 
