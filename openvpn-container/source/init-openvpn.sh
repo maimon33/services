@@ -4,8 +4,8 @@
 #
 # Copyright (c) 2013 Nyr. Released under the MIT License.
 
-export conf_dir="/etc/openvpn/server"
-export client_dir="/etc/openvpn"
+export conf_dir="/home/ubuntu/openvpn/server"
+export client_dir="/home/ubuntu/openvpn"
 export protocol="udp"
 export port="1194"
 export client="client"
@@ -14,6 +14,10 @@ if [ -z "$SERVER_ADDRESS" ]; then
 	export SERVER_ADDRESS=$SERVER_ADDRESS
 else
 	SERVER_ADDRESS=`curl ipinfo.io/ip`
+fi
+
+if [[ ! -e /home/ubuntu/openvpn ]]; then
+	mkdir -p /home/ubuntu/openvpn
 fi
 
 # Discard stdin. Needed when running from an one-liner which includes a newline
@@ -43,18 +47,18 @@ fi
 new_client () {
 	# Generates the custom client.ovpn
 	{
-	cat /etc/openvpn/server/client-common.txt
+	cat $conf_dir/client-common.txt
 	echo "<ca>"
-	cat /etc/openvpn/server/easy-rsa/pki/ca.crt
+	cat $conf_dir/easy-rsa/pki/ca.crt
 	echo "</ca>"
 	echo "<cert>"
-	sed -ne '/BEGIN CERTIFICATE/,$ p' /etc/openvpn/server/easy-rsa/pki/issued/"$client".crt
+	sed -ne '/BEGIN CERTIFICATE/,$ p' $conf_dir/easy-rsa/pki/issued/"$client".crt
 	echo "</cert>"
 	echo "<key>"
-	cat /etc/openvpn/server/easy-rsa/pki/private/"$client".key
+	cat $conf_dir/easy-rsa/pki/private/"$client".key
 	echo "</key>"
 	echo "<tls-crypt>"
-	sed -ne '/BEGIN OpenVPN Static key/,$ p' /etc/openvpn/server/tc.key
+	sed -ne '/BEGIN OpenVPN Static key/,$ p' $conf_dir/tc.key
 	echo "</tls-crypt>"
 	} > $client_dir/$client.ovpn
 }
@@ -89,7 +93,7 @@ define_iptables () {
 	set +x
 }
 
-if [[ ! -e /etc/openvpn/server/server.conf ]]; then
+if [[ ! -e $conf_dir/server.conf ]]; then
 	clear
 	echo 'Welcome to this OpenVPN road warrior installer!'
 	# If system has a single IPv4, it is selected automatically. Else, ask the user
@@ -97,10 +101,10 @@ if [[ ! -e /etc/openvpn/server/server.conf ]]; then
 
 	# Get easy-rsa
 	easy_rsa_url='https://github.com/OpenVPN/easy-rsa/releases/download/v3.0.7/EasyRSA-3.0.7.tgz'
-	mkdir -p /etc/openvpn/server/easy-rsa/
-	{ wget -qO- "$easy_rsa_url" 2>/dev/null || curl -sL "$easy_rsa_url" ; } | tar xz -C /etc/openvpn/server/easy-rsa/ --strip-components 1
-	chown -R root:root /etc/openvpn/server/easy-rsa/
-	cd /etc/openvpn/server/easy-rsa/
+	mkdir -p $conf_dir/easy-rsa/
+	{ wget -qO- "$easy_rsa_url" 2>/dev/null || curl -sL "$easy_rsa_url" ; } | tar xz -C $conf_dir/easy-rsa/ --strip-components 1
+	chown -R root:root $conf_dir/easy-rsa/
+	cd $conf_dir/easy-rsa/
 	# Create the PKI, set up the CA and the server and client certificates
 	./easyrsa init-pki
 	./easyrsa --batch build-ca nopass
@@ -108,13 +112,13 @@ if [[ ! -e /etc/openvpn/server/server.conf ]]; then
 	EASYRSA_CERT_EXPIRE=3650 ./easyrsa build-client-full "$client" nopass
 	EASYRSA_CRL_DAYS=3650 ./easyrsa gen-crl
 	# Move the stuff we need
-	cp pki/ca.crt pki/private/ca.key pki/issued/server.crt pki/private/server.key pki/crl.pem /etc/openvpn/server
+	cp pki/ca.crt pki/private/ca.key pki/issued/server.crt pki/private/server.key pki/crl.pem $conf_dir
 	# CRL is read with each client connection, while OpenVPN is dropped to nobody
-	chown nobody:"$group_name" /etc/openvpn/server/crl.pem
+	chown nobody:"$group_name" $conf_dir/crl.pem
 	# Without +x in the directory, OpenVPN can't run a stat() on the CRL file
-	chmod o+x /etc/openvpn/server/
+	chmod o+x $conf_dir/
 	# Generate key for tls-crypt
-	openvpn --genkey --secret /etc/openvpn/server/tc.key
+	openvpn --genkey --secret $conf_dir/tc.key
 	# Create the DH parameters file using the predefined ffdhe2048 group
 	echo '-----BEGIN DH PARAMETERS-----
 MIIBCAKCAQEA//////////+t+FRYortKmq/cViAnPTzx2LnFg84tNpWp4TZBFGQz
@@ -123,7 +127,7 @@ MIIBCAKCAQEA//////////+t+FRYortKmq/cViAnPTzx2LnFg84tNpWp4TZBFGQz
 YdEIqUuyyOP7uWrat2DX9GgdT0Kj3jlN9K5W7edjcrsZCwenyO4KbXCeAvzhzffi
 7MA0BM0oNC9hkXL+nOmFg/+OTxIy7vKBg8P+OxtMb61zO7X8vC7CIAXFjvGDfRaD
 ssbzSibBsu/6iGtCOGEoXJf//////////wIBAg==
------END DH PARAMETERS-----' > /etc/openvpn/server/dh.pem
+-----END DH PARAMETERS-----' > $conf_dir/dh.pem
 	# Generate server.conf
 	echo "local $ip
 port $port
@@ -136,19 +140,19 @@ dh $conf_dir/dh.pem
 auth SHA512
 tls-crypt $conf_dir/tc.key
 topology subnet
-server 10.8.0.0 255.255.255.0" > /etc/openvpn/server/server.conf
+server 10.8.0.0 255.255.255.0" > $conf_dir/server.conf
 	# IPv6
 	if [[ -z "$ip6" ]]; then
-		echo 'push "redirect-gateway def1 bypass-dhcp"' >> /etc/openvpn/server/server.conf
+		echo 'push "redirect-gateway def1 bypass-dhcp"' >> $conf_dir/server.conf
 	else
-		echo 'server-ipv6 fddd:1194:1194:1194::/64' >> /etc/openvpn/server/server.conf
-		echo 'push "redirect-gateway def1 ipv6 bypass-dhcp"' >> /etc/openvpn/server/server.conf
+		echo 'server-ipv6 fddd:1194:1194:1194::/64' >> $conf_dir/server.conf
+		echo 'push "redirect-gateway def1 ipv6 bypass-dhcp"' >> $conf_dir/server.conf
 	fi
-	echo 'ifconfig-pool-persist ipp.txt' >> /etc/openvpn/server/server.conf
+	echo 'ifconfig-pool-persist ipp.txt' >> $conf_dir/server.conf
 	
 	# DNS
-	echo 'push "dhcp-option DNS 8.8.8.8"' >> /etc/openvpn/server/server.conf
-	echo 'push "dhcp-option DNS 8.8.4.4"' >> /etc/openvpn/server/server.conf
+	echo 'push "dhcp-option DNS 8.8.8.8"' >> $conf_dir/server.conf
+	echo 'push "dhcp-option DNS 8.8.4.4"' >> $conf_dir/server.conf
 
 	echo "keepalive 10 120
 cipher AES-256-CBC
@@ -158,9 +162,9 @@ persist-key
 persist-tun
 status $conf_dir/openvpn-status.log
 verb 3
-crl-verify $conf_dir/crl.pem" >> /etc/openvpn/server/server.conf
+crl-verify $conf_dir/crl.pem" >> $conf_dir/server.conf
 	if [[ "$protocol" = "udp" ]]; then
-		echo "explicit-exit-notify" >> /etc/openvpn/server/server.conf
+		echo "explicit-exit-notify" >> $conf_dir/server.conf
 	fi
 	# Enable net.ipv4.ip_forward for the system
 	echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/30-openvpn-forward.conf
@@ -182,7 +186,7 @@ auth SHA512
 cipher AES-256-CBC
 ignore-unknown-option block-outside-dns
 block-outside-dns
-verb 3" > /etc/openvpn/server/client-common.txt
+verb 3" > $conf_dir/client-common.txt
 	# Enable and start the OpenVPN service
 	# systemctl enable --now openvpn-server@server.service
 	# Generates the custom client.ovpn
@@ -194,9 +198,9 @@ verb 3" > /etc/openvpn/server/client-common.txt
 	echo "New clients can be added by running this script again."
 
 	echo "Starting openvpn"
-	openvpn --config /etc/openvpn/server/server.conf
+	openvpn --config $conf_dir/server.conf
 else
 	echo "Server is already configured..."
 	echo "Starting openvpn"
-	openvpn --config /etc/openvpn/server/server.conf
+	openvpn --config $conf_dir/server.conf
 fi

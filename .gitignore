@@ -2,4 +2,4 @@
 openvpn-container/client.ovpn
 openvpn-container/server/*
 *.pem
-openvpn-container/.terraform/*
+openvpn-container/*terraform*
