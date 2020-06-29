@@ -13,9 +13,12 @@ Clone repo and build using tag `openvpn-container`
 `docker build . -t openvpn-container`
 
 ## Run
+
+> You can add the server dns address by using `SERVER_ADDRESS` variable in the run command. if you don't use it the entrypoint will collect the public IP
+
 * Windows
 
-`docker run -d -v %cd%:/etc/openvpn -e NETWORK="192.168.0.0/24" -p 1194:1194/udp --privileged --restart on-failure openvpn-container`
+`docker run -d -v %cd%:/etc/openvpn -e NETWORK="192.168.0.0/24" -e SERVER_ADDRESS=my_host.dns.com -p 1194:1194/udp --privileged --restart on-failure openvpn-container`
 * Linux\OSX
 
-`docker run -d -v ${pwd}:/etc/openvpn -e NETWORK="192.168.0.0/24" -p 1194:1194/udp --privileged --restart on-failure openvpn-container`
+`docker run -d -v ${pwd}:/etc/openvpn -e NETWORK="192.168.0.0/24" -e SERVER_ADDRESS=my_host.dns.com -p 1194:1194/udp --privileged --restart on-failure openvpn-container`

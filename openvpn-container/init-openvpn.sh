@@ -4,13 +4,17 @@
 #
 # Copyright (c) 2013 Nyr. Released under the MIT License.
 
-export public_ip=`curl ipinfo.io/ip`
 export conf_dir="/etc/openvpn/server"
 export client_dir="/etc/openvpn"
 export protocol="udp"
 export port="1194"
 export client="client"
 
+if [ -z "$SERVER_ADDRESS" ]; then
+	export SERVER_ADDRESS=$SERVER_ADDRESS
+else
+	SERVER_ADDRESS=`curl ipinfo.io/ip`
+fi
 
 # Discard stdin. Needed when running from an one-liner which includes a newline
 read -N 999999 -t 0.001
@@ -163,13 +167,12 @@ crl-verify $conf_dir/crl.pem" >> /etc/openvpn/server/server.conf
 
 	define_iptables
 
-	# If the server is behind NAT, use the correct IP address
-	[[ -n "$public_ip" ]] && ip="$public_ip"
+
 	# client-common.txt is created so we have a template to add further users later
 	echo "client
 dev tun
 proto $protocol
-remote $ip $port
+remote $SERVER_ADDRESS $port
 resolv-retry infinite
 nobind
 persist-key
