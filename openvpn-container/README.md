@@ -1,6 +1,6 @@
 # Openvpn container
 
-Simple container that runs Openvpn server.
+Simple container that runs Openvpn server.<br>Server must be exposed and have inbound allowed to container serving port (defaults to 1194/udp).<br>
 Once a client connects, all traffic is routed via server and the user has access to resources in server's LAN and uses the connection as full tunnel proxy.
 
 Run output generates two elements:
@@ -8,9 +8,13 @@ Run output generates two elements:
 * client configuration file. AKA client.ovpn
 
 ## Build
-Clone repo and build using tag `openvpn-container`
+Clone repo and build.
 
-`docker build . -t openvpn-container`
+```
+$ git clone https://github.com/maimon33/services.git
+$ cd services/openvpn-container/source
+$ docker build . -t openvpn-container`
+```
 
 ## Run
 
