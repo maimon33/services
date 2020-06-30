@@ -4,21 +4,19 @@
 #
 # Copyright (c) 2013 Nyr. Released under the MIT License.
 
-export conf_dir="/home/ubuntu/openvpn/server"
-export client_dir="/home/ubuntu/openvpn"
+export conf_dir="/etc/openvpn/server"
+export client_dir="/etc/openvpn"
 export protocol="udp"
 export port="1194"
 export client="client"
 
-if [ -z "$SERVER_ADDRESS" ]; then
+set -x
+if [ ! -z "$SERVER_ADDRESS" ]; then
 	export SERVER_ADDRESS=$SERVER_ADDRESS
 else
-	SERVER_ADDRESS=`curl ipinfo.io/ip`
+	export SERVER_ADDRESS=`curl ipinfo.io/ip`
 fi
-
-if [[ ! -e /home/ubuntu/openvpn ]]; then
-	mkdir -p /home/ubuntu/openvpn
-fi
+set +x
 
 # Discard stdin. Needed when running from an one-liner which includes a newline
 read -N 999999 -t 0.001
@@ -64,7 +62,6 @@ new_client () {
 }
 
 define_iptables () {
-	set -x
 	# Allow inbound to OpenVPN
 	iptables -A INPUT -p $protocol --dport $port -j ACCEPT
 	
@@ -90,7 +87,6 @@ define_iptables () {
 	iptables -A FORWARD -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
 
 	iptables -A User-Firewall -j REJECT --reject-with icmp-host-prohibited
-	set +x
 }
 
 if [[ ! -e $conf_dir/server.conf ]]; then

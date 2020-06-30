@@ -24,25 +24,6 @@ data "http" "myip" {
   url = "http://ipv4.icanhazip.com"
 }
 
-resource "tls_private_key" "ssh" {
-  algorithm = "RSA"
-  rsa_bits  = 4096
-}
-
-resource "aws_key_pair" "openvpn-key" {
-  key_name   = "openvpn-key"
-  public_key = tls_private_key.ssh.public_key_openssh
-
-  provisioner "local-exec" {
-    command = "echo \"${tls_private_key.ssh.private_key_pem}\" > ./openvpn-key; chmod 400 ./openvpn-key"
-  }
-
-  provisioner "local-exec" {
-    when = destroy
-    command = "rm openvpn-key"
-  }
-}
-
 resource "aws_iam_instance_profile" "openvpn_profile" {
   name = "openvpn_profile"
   role = aws_iam_role.openvpn_role.name
@@ -88,19 +69,13 @@ resource "aws_iam_role" "openvpn_role" {
   EOF
 }
 
-#resource "aws_s3_bucket" "openvpn-bucket" {
-#  bucket = aws_instance.openvpn.id
-#  acl    = "private"
-#
-#  tags = {
-#    Name        = "Openvpn S3 bucket"
-#    Environment = "Dev"
-#  }
-#}
-
 resource "aws_eip" "openvpn_eip" {
   instance = aws_instance.openvpn.id
   vpc      = true
+}
+
+output "openvpn_ip" {
+  value = aws_eip.openvpn_eip.public_ip
 }
 
 resource "aws_security_group" "allow_openvpn" {
@@ -135,10 +110,10 @@ resource "aws_security_group" "allow_openvpn" {
   }
 }
 
-#resource "aws_key_pair" "openvpn" {
-#  key_name   = "openvpn-key"
-#  public_key = "ssh-rsa AAAAB3NzaC1yc2EAAAABJQAAAQEAsV4UsJCsDuHkCF1QGyNWKKaNeygHutHpRqTlPwiM2XbHX0w56P1TbMhn8Pt21PgoX98f8YFbCZhxMH2uqGNz/Km5re6wM7WjMX9G4UmHaX2Llt//5l3wyZn7KWzK9HKqC8MsV3VZrVIskeVq/A4u9kyY0FCia1th7CceGQCwJA62+vDr3WEkaHkCEU+B1pXLnAHOqkk0CBDqO9K36vf1EVFAqfupYfFzxTCMj2jwkXN1F5A8ca7FU08m+bRv9Fcgcwe110RKhSMgTD05V+dmsaN6xShp+3OO44zDQgQ+pMjioRWrrqOnhWreXKjxBRhMaXgCRhON8yY8fqbJRpSfuQ== rsa-key-20200620"
-#}
+resource "aws_key_pair" "openvpn" {
+  key_name   = "openvpn-key"
+  public_key = file("id_rsa.pub")
+}
 
 resource "aws_instance" "openvpn" {
   ami                     = data.aws_ami.ubuntu.id
@@ -173,8 +148,7 @@ resource "aws_instance" "openvpn" {
     type        = "ssh"
     user        = "ubuntu"
     password    = ""
-    // private_key = file("./openvpn-key")
-    #("openvpn-key")
+    private_key = file("./id_rsa")
     host        = self.public_ip
   }
   

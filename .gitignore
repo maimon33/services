@@ -3,3 +3,7 @@ openvpn-container/client.ovpn
 openvpn-container/server/*
 *.pem
 openvpn-container/*terraform*
+openvpn-container/id_rsa*
+openvpn-container/aws_client.ovpn
+openvpn-container/ip
+openvpn-container/openvpn_ip

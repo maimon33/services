@@ -22,3 +22,36 @@ Clone repo and build using tag `openvpn-container`
 * Linux\OSX
 
 `docker run -d -v ${pwd}:/etc/openvpn -e NETWORK="192.168.0.0/24" -e SERVER_ADDRESS=my_host.dns.com -p 1194:1194/udp --privileged --restart on-failure openvpn-container`
+
+## Terraform and AWS instance
+
+Use Terraform for one command start server in AWS
+
+### Prerequisite
+
+Connection to AWS instances require SSH key. Use the following command in Windows, OSX and Linux
+`ssh-keygen -N "" -f id_rsa`
+
+### Run
+
+```
+$ terrafrom init
+$ terraform apply
+```
+
+### post run
+
+You now will need to collect your ovpn profile.
+
+* Windows
+
+```
+$ terraform output openvpn_ip > openvpn_ip && set /p openvpn_ip=<openvpn_ip
+$ scp -i id_rsa ubuntu@%openvpn_ip%:/home/ubuntu/openvpn/client.ovpn .
+```
+
+* Linux\OSX
+
+```
+$ scp -i id_rsa ubuntu@$(terraform output openvpn_ip):/home/ubuntu/openvpn/client.ovpn .
+```
