@@ -1,7 +1,7 @@
 # Openvpn container
 
 Simple container that runs Openvpn server.
-Once a client connects. The user has access to resources in server's LAN and uses the connection as full tunnel proxy.
+Once a client connects, all traffic is routed via server and the user has access to resources in server's LAN and uses the connection as full tunnel proxy.
 
 Run output generates two elements:
 * Server configuration folder based on current working directory
