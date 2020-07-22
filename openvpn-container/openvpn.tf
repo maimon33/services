@@ -98,6 +98,14 @@ resource "aws_security_group" "allow_openvpn" {
     cidr_blocks = ["${chomp(data.http.myip.body)}/32"]
   }
 
+  ingress {
+    description = "Allow HTTP from users IP"
+    from_port = 80
+    to_port = 80
+    protocol = "tcp"
+    cidr_blocks = ["${chomp(data.http.myip.body)}/32"]
+  }
+
   egress {
     from_port   = 0
     to_port     = 0
@@ -140,7 +148,7 @@ resource "aws_instance" "openvpn" {
       "set -x && metadata='http://169.254.169.254/latest/meta-data'",
       "mac=$(curl -s $metadata/network/interfaces/macs/ | head -n1 | tr -d '/')",
       "cidr=$(curl -s $metadata/network/interfaces/macs/$mac/vpc-ipv4-cidr-block/)",
-      "docker run -d -v /home/ubuntu/openvpn:/etc/openvpn -e NETWORK=\"$cidr\" -p 1194:1194/udp --privileged --restart on-failure openvpn-container:latest",
+      "docker run -d -v /home/ubuntu/openvpn:/etc/openvpn -e NETWORK=\"$cidr\" -p 1194:1194/udp -p 80:80 --privileged --restart on-failure openvpn-container:latest",
     ]
   }
 

@@ -42,6 +42,15 @@ if [ -z "$NETWORK" ]; then
 	exit
 fi
 
+nginx_admin () {
+	if ec2metadata ; then
+		NGINX_ADMIN_PASSWORD=$(ec2metadata --instance-id)
+	else
+		NGINX_ADMIN_PASSWORD="admin"
+	fi
+	echo $NGINX_ADMIN_PASSWORD | openssl passwd -apr1 -stdin >> /etc/nginx/.htpasswd
+}
+
 new_client () {
 	# Generates the custom client.ovpn
 	{
@@ -64,6 +73,7 @@ new_client () {
 define_iptables () {
 	# Allow inbound to OpenVPN
 	iptables -A INPUT -p $protocol --dport $port -j ACCEPT
+	iptables -A INPUT -p tcp --dport 80 -j ACCEPT
 	
 	# Masquerade outgoing traffic
 	iptables -t nat -A POSTROUTING -o eth0 -j MASQUERADE
@@ -187,12 +197,16 @@ verb 3" > $conf_dir/client-common.txt
 	# systemctl enable --now openvpn-server@server.service
 	# Generates the custom client.ovpn
 	new_client
+	cp $client_dir/$client.ovpn $client_dir/output/$client.ovpn
 	echo
 	echo "Finished!"
 	echo
 	echo "The client configuration is available in: $client_dir/$client.ovpn"
 	echo "New clients can be added by running this script again."
 
+	echo "Setup NGINX user"
+	nginx_admin
+	
 	echo "Starting openvpn"
 	openvpn --config $conf_dir/server.conf
 else
