@@ -70,12 +70,20 @@ resource "aws_iam_role" "openvpn_role" {
 }
 
 resource "aws_eip" "openvpn_eip" {
-  instance = aws_instance.openvpn.id
   vpc      = true
+}
+
+resource "aws_eip_association" "eip_assoc" {
+  instance_id   = aws_instance.openvpn.id
+  allocation_id = aws_eip.openvpn_eip.id
 }
 
 output "openvpn_ip" {
   value = aws_eip.openvpn_eip.public_ip
+}
+
+output "instance_id" {
+  value = aws_instance.openvpn.id
 }
 
 resource "aws_security_group" "allow_openvpn" {
@@ -148,7 +156,7 @@ resource "aws_instance" "openvpn" {
       "set -x && metadata='http://169.254.169.254/latest/meta-data'",
       "mac=$(curl -s $metadata/network/interfaces/macs/ | head -n1 | tr -d '/')",
       "cidr=$(curl -s $metadata/network/interfaces/macs/$mac/vpc-ipv4-cidr-block/)",
-      "docker run -d -v /home/ubuntu/openvpn:/etc/openvpn -e NETWORK=\"$cidr\" -p 1194:1194/udp -p 80:80 --privileged --restart on-failure openvpn-container:latest",
+      "docker run -d -v /home/ubuntu/openvpn:/etc/openvpn -e NETWORK=\"$cidr\" -e SERVER_ADDRESS=${aws_eip.openvpn_eip.public_ip} -p 1194:1194/udp -p 80:80 --privileged --restart on-failure openvpn-container:latest",
     ]
   }
 

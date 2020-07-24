@@ -43,15 +43,18 @@ if [ -z "$NETWORK" ]; then
 fi
 
 nginx_admin () {
-	if ec2metadata ; then
-		NGINX_ADMIN_PASSWORD=$(ec2metadata --instance-id)
+	mkdir -p /etc/nginx
+	AWS_METADATA="http://169.254.169.254/latest/meta-data/instance-id"
+	if [ $(curl -LI $AWS_METADATA -o /dev/null -w '%{http_code}\n' -s) == "200" ]; then
+		NGINX_ADMIN_PASSWORD=$(echo $(curl $AWS_METADATA) | openssl passwd -apr1 -stdin)
 	else
-		NGINX_ADMIN_PASSWORD="admin"
+		NGINX_ADMIN_PASSWORD=$(echo admin | openssl passwd -apr1 -stdin)
 	fi
-	echo $NGINX_ADMIN_PASSWORD | openssl passwd -apr1 -stdin >> /etc/nginx/.htpasswd
+	echo "admin:$NGINX_ADMIN_PASSWORD" >> /etc/nginx/.htpasswd
 }
 
 new_client () {
+	mkdir -p $client_dir/output/
 	# Generates the custom client.ovpn
 	{
 	cat $conf_dir/client-common.txt

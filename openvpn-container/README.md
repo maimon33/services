@@ -34,6 +34,7 @@ Use Terraform for one command start server in AWS
 ### Prerequisite
 
 Connection to AWS instances require SSH key. Use the following command in Windows, OSX and Linux
+
 `ssh-keygen -N "" -f id_rsa`
 
 ### Run
