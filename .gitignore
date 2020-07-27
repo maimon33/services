@@ -2,3 +2,5 @@ openvpn-container/source/server
 openvpn-container/source/client*
 openvpn-container/*terraform*
 openvpn-container/id_rsa*
+openvpn-container/*.ovpn
+openvpn-container/server/*
