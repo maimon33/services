@@ -1,0 +1,6 @@
+# /etc/pam.d/openvpn
+# Referenced if you switch to the PAM plugin instead of auth-user-pass-verify.
+# Default: auth-verify.sh (pyotp) is used — this file is a fallback/reference.
+auth    required    pam_unix.so    shadow nodelay
+auth    required    pam_google_authenticator.so    secret=/data/users/${USER}/.google_authenticator    user=root
+account required    pam_unix.so

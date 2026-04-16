@@ -1,0 +1,57 @@
+services:
+  openvpn:
+    build: .
+    image: openvpn-server:latest
+    container_name: openvpn
+    restart: unless-stopped
+    cap_add:
+      - NET_ADMIN
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun
+    ports:
+      - "${OPENVPN_PORT:-1194}:1194/udp"
+    volumes:
+      # Persistent data: PKI, issued certs, CRL, user TOTP secrets, server config, logs
+      - openvpn_data:/data
+      # Live-editable routes file — entrypoint writes ROUTE_APPS into a managed block, so not :ro
+      - ./config/routes.conf:/etc/openvpn/routes.conf
+    env_file:
+      - .env
+    sysctls:
+      - net.ipv4.ip_forward=1
+    healthcheck:
+      test: ["CMD", "pgrep", "openvpn"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ── Optional: OpenVPN Admin UI ───────────────────────────────────────────────
+  # Enable by setting ENABLE_ADMIN_UI=true in .env and deploying with --profile admin.
+  # deploy.sh handles this automatically.
+  openvpn-admin:
+    image: d3vilh/openvpn-admin:latest
+    container_name: openvpn-admin
+    restart: unless-stopped
+    profiles: [admin]
+    depends_on:
+      openvpn:
+        condition: service_healthy
+    ports:
+      - "${ADMIN_PORT:-8080}:8080"
+    volumes:
+      - openvpn_data:/data:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    environment:
+      OPENVPN_ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
+      OPENVPN_ADMIN_PASSWORD: "${ADMIN_PASSWORD:?ADMIN_PASSWORD is required when ENABLE_ADMIN_UI=true}"
+      OPENVPN_CONTAINER: openvpn
+
+volumes:
+  openvpn_data:
+    driver: local
+    # To use a bind mount for easier host-side access, replace with:
+    # driver_opts:
+    #   type: none
+    #   o: bind
+    #   device: /opt/openvpn/data

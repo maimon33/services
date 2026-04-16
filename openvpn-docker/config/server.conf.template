@@ -1,0 +1,66 @@
+### OpenVPN server configuration — generated from server.conf.template
+### Do not edit /data/server.conf directly; edit the template and reinit.
+
+port 1194
+proto ${OPENVPN_PROTO}
+dev tun
+
+# PKI
+ca   ${EASYRSA_PKI}/ca.crt
+cert ${EASYRSA_PKI}/issued/server.crt
+key  ${EASYRSA_PKI}/private/server.key
+dh   ${EASYRSA_PKI}/dh.pem
+
+# TLS hardening (tls-crypt is preferred over tls-auth — encrypts the handshake)
+tls-crypt ${EASYRSA_PKI}/tc.key
+
+# Certificate revocation
+crl-verify ${EASYRSA_PKI}/crl.pem
+
+# Cipher suite (AES-256-GCM is the default in OpenVPN 2.5+)
+cipher AES-256-GCM
+auth   SHA256
+tls-version-min 1.2
+
+# Tunnel addressing
+topology subnet
+server ${VPN_NETWORK} ${VPN_SUBNET}
+ifconfig-pool-persist /data/ipp.txt
+
+# Per-client config directory (used by client-connect.sh for dynamic routes)
+client-config-dir /data/ccd
+
+# Push client settings
+push "redirect-gateway def1 bypass-dhcp"
+push "dhcp-option DNS ${PUSH_DNS_1}"
+push "dhcp-option DNS ${PUSH_DNS_2}"
+
+# Keepalive and connection management
+keepalive 10 120
+max-clients 100
+duplicate-cn
+
+# Drop privileges after init
+user  nobody
+group nogroup
+
+persist-key
+persist-tun
+
+# Logging
+status      /data/logs/openvpn-status.log 10
+log-append  /data/logs/openvpn.log
+verb 3
+
+# ── MFA: auth-user-pass-verify (TOTP) ────────────────────────────────────────
+# Clients must supply their username (= cert CN) + current TOTP code as password.
+# Disable auth-user-pass-verify and related lines to allow cert-only auth.
+script-security 2
+auth-user-pass-verify /etc/openvpn/scripts/auth-verify.sh via-file
+verify-client-cert require
+
+# Per-client dynamic routes are injected via client-connect.sh
+client-connect /etc/openvpn/scripts/client-connect.sh
+
+# ── UDP explicit exit notify ──────────────────────────────────────────────────
+explicit-exit-notify 1
