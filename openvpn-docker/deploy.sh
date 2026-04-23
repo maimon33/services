@@ -219,15 +219,70 @@ info "Copying files..."
 scp $SCP_OPTS \
     "${SCRIPT_DIR}/Dockerfile" \
     "${SCRIPT_DIR}/docker-compose.yml" \
-    "${SCRIPT_DIR}/.env" \
     "${REMOTE}:${DEPLOY_REMOTE_DIR}/"
 
+# Copy config files — routes.conf is runtime-managed and must not be overwritten
 # shellcheck disable=SC2086
-scp $SCP_OPTS -r "${SCRIPT_DIR}/config/." "${REMOTE}:${DEPLOY_REMOTE_DIR}/config/"
+scp $SCP_OPTS "${SCRIPT_DIR}/config/server.conf.template" \
+    "${REMOTE}:${DEPLOY_REMOTE_DIR}/config/"
+# shellcheck disable=SC2086
+scp $SCP_OPTS -r "${SCRIPT_DIR}/config/pam.d/." \
+    "${REMOTE}:${DEPLOY_REMOTE_DIR}/config/pam.d/"
+
+# Only install routes.conf on first deploy; after that it is owned by the workflow
+# shellcheck disable=SC2086
+if ssh $SSH_OPTS "$REMOTE" "test -f ${DEPLOY_REMOTE_DIR}/config/routes.conf" 2>/dev/null; then
+    info "routes.conf already exists on remote — skipping (managed at runtime via workflow)."
+else
+    # shellcheck disable=SC2086
+    scp $SCP_OPTS "${SCRIPT_DIR}/config/routes.conf" \
+        "${REMOTE}:${DEPLOY_REMOTE_DIR}/config/"
+    success "routes.conf installed (first deploy)."
+fi
+
 # shellcheck disable=SC2086
 scp $SCP_OPTS -r "${SCRIPT_DIR}/scripts/." "${REMOTE}:${DEPLOY_REMOTE_DIR}/scripts/"
 
 success "Files copied."
+
+# ── .env — diff against remote if exists, prompt before overwrite ─────────────
+if [[ -f "${SCRIPT_DIR}/.env" ]]; then
+    # shellcheck disable=SC2086
+    if ssh $SSH_OPTS "$REMOTE" "test -f ${DEPLOY_REMOTE_DIR}/.env" 2>/dev/null; then
+        _remote_env_tmp=$(mktemp)
+        # shellcheck disable=SC2086
+        scp $SCP_OPTS -q "${REMOTE}:${DEPLOY_REMOTE_DIR}/.env" "$_remote_env_tmp"
+
+        echo ""
+        if diff -q "$_remote_env_tmp" "${SCRIPT_DIR}/.env" &>/dev/null; then
+            success ".env on remote is identical — skipping."
+        else
+            echo "${yellow}⚠${reset}  Remote .env differs from local. Changes (remote → local):"
+            echo ""
+            diff --color=always "$_remote_env_tmp" "${SCRIPT_DIR}/.env" 2>/dev/null \
+                || diff "$_remote_env_tmp" "${SCRIPT_DIR}/.env" || true
+            echo ""
+            ask_yn _copy_env "Overwrite remote .env with local?" "n"
+            if [[ "$(echo "${_copy_env}" | tr '[:upper:]' '[:lower:]')" == "y" ]]; then
+                # shellcheck disable=SC2086
+                scp $SCP_OPTS "${SCRIPT_DIR}/.env" "${REMOTE}:${DEPLOY_REMOTE_DIR}/.env"
+                success ".env overwritten on remote."
+            else
+                info "Kept existing remote .env."
+            fi
+        fi
+        rm -f "$_remote_env_tmp"
+    else
+        ask_yn _copy_env "Copy local .env to ${REMOTE}:${DEPLOY_REMOTE_DIR}/.env?" "y"
+        if [[ "$(echo "${_copy_env}" | tr '[:upper:]' '[:lower:]')" == "y" ]]; then
+            # shellcheck disable=SC2086
+            scp $SCP_OPTS "${SCRIPT_DIR}/.env" "${REMOTE}:${DEPLOY_REMOTE_DIR}/.env"
+            success ".env copied to remote."
+        else
+            info "Skipped — make sure ${DEPLOY_REMOTE_DIR}/.env exists on the server before the container starts."
+        fi
+    fi
+fi
 
 # ── Compose profiles ─────────────────────────────────────────────────────────
 COMPOSE_PROFILES=""
@@ -246,6 +301,28 @@ ssh $SSH_OPTS "$REMOTE" "
     sudo docker compose ${COMPOSE_PROFILES} up -d
     echo ''
     sudo docker compose ${COMPOSE_PROFILES} ps
+"
+
+# ── Apply server.conf template changes ────────────────────────────────────────
+# The live /data/server.conf is only generated on first init and never updated
+# automatically. Regenerate it from the (now-updated) template and reload
+# OpenVPN with SIGUSR1 if anything changed. SIGUSR1 preserves the TUN interface
+# (persist-tun) so existing clients reconnect automatically within keepalive window.
+info "Checking server.conf against template..."
+# shellcheck disable=SC2086
+ssh $SSH_OPTS "$REMOTE" "
+    sudo docker exec openvpn bash -c '
+        export EASYRSA_PKI VPN_NETWORK VPN_SUBNET PUSH_DNS_1 PUSH_DNS_2 OPENVPN_PROTO
+        envsubst < /etc/openvpn/config-templates/server.conf.template > /tmp/server.conf.new
+        if diff -q /tmp/server.conf.new /data/server.conf > /dev/null 2>&1; then
+            echo \"  ✔ server.conf is up to date\"
+        else
+            cp /tmp/server.conf.new /data/server.conf
+            echo \"  ▶ server.conf updated — reloading OpenVPN (SIGUSR1)...\"
+            kill -USR1 1
+        fi
+        rm -f /tmp/server.conf.new
+    '
 "
 
 echo ""

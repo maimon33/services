@@ -44,7 +44,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
     environment:
       OPENVPN_ADMIN_USERNAME: "${ADMIN_USERNAME:-admin}"
-      OPENVPN_ADMIN_PASSWORD: "${ADMIN_PASSWORD:?ADMIN_PASSWORD is required when ENABLE_ADMIN_UI=true}"
+      OPENVPN_ADMIN_PASSWORD: "${ADMIN_PASSWORD:-}"
       OPENVPN_CONTAINER: openvpn
 
 volumes:

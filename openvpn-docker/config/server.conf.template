@@ -37,8 +37,9 @@ push "dhcp-option DNS ${PUSH_DNS_2}"
 
 # Keepalive and connection management
 keepalive 10 120
+reneg-sec 86400
 max-clients 100
-duplicate-cn
+float
 
 # Drop privileges after init
 user  nobody
@@ -59,8 +60,14 @@ script-security 2
 auth-user-pass-verify /etc/openvpn/scripts/auth-verify.sh via-file
 verify-client-cert require
 
+# After initial TOTP login, issue a session token for subsequent TLS renegotiations.
+# Without this, the client silently re-sends the expired TOTP code on each rekey
+# and gets kicked. Token lifetime matches reneg-sec so it never needs re-entry.
+auth-gen-token 86400
+
 # Per-client dynamic routes are injected via client-connect.sh
-client-connect /etc/openvpn/scripts/client-connect.sh
+client-connect    /etc/openvpn/scripts/client-connect.sh
+client-disconnect /etc/openvpn/scripts/client-disconnect.sh
 
 # ── UDP explicit exit notify ──────────────────────────────────────────────────
 explicit-exit-notify 1

@@ -13,6 +13,7 @@ on:
           - revoke-user
           - regen-totp
           - get-profile
+          - regen-profile
           - list-users
           # ── Route management ─────────────────────────────────────────────────
           - list-routes
@@ -22,7 +23,7 @@ on:
           - status
           - restart
       username:
-        description: "Username / email  (required for: add-user, revoke-user, regen-totp, get-profile)"
+        description: "Username / email  (required for: add-user, revoke-user, regen-totp, get-profile, regen-profile)"
         required: false
         type: string
       route:
@@ -44,7 +45,7 @@ on:
 concurrency:
   group: >-
     vpn-${{
-      contains(fromJSON('["add-user","revoke-user","regen-totp","get-profile"]'), inputs.action)
+      contains(fromJSON('["add-user","revoke-user","regen-totp","get-profile","regen-profile"]'), inputs.action)
       && inputs.username
       || inputs.action
     }}
@@ -54,7 +55,18 @@ jobs:
   manage:
     name: "${{ inputs.action }}${{ inputs.username && format(' · {0}', inputs.username) || '' }}${{ inputs.route && format(' · {0}', inputs.route) || '' }}"
     runs-on: ubuntu-latest
-    environment: vpn-admin   # optional approval gate — remove if not needed
+    # environment: vpn-admin   # uncomment for optional manual approval gate
+
+    permissions:
+      id-token: write   # required for OIDC AWS auth
+      contents: read
+
+    env:
+      VPN_HOST:       ${{ secrets.VPN_HOST }}
+      VPN_SSH_USER:   ${{ secrets.VPN_SSH_USER || 'ubuntu' }}
+      VPN_SSH_PORT:   ${{ secrets.VPN_SSH_PORT || '22' }}
+      VPN_REMOTE_DIR: ${{ secrets.VPN_REMOTE_DIR || '/opt/openvpn' }}
+      VPN_CONTAINER:  ${{ secrets.VPN_CONTAINER_NAME || 'openvpn' }}
 
     steps:
       # ── 0. Validate inputs ───────────────────────────────────────────────────
@@ -64,7 +76,7 @@ jobs:
           USERNAME="${{ inputs.username }}"
           ROUTE="${{ inputs.route }}"
 
-          USER_ACTIONS="add-user revoke-user regen-totp get-profile"
+          USER_ACTIONS="add-user revoke-user regen-totp get-profile regen-profile"
           ROUTE_ACTIONS="add-route remove-route"
 
           if echo "$USER_ACTIONS" | grep -qw "$ACTION" && [[ -z "$USERNAME" ]]; then
@@ -82,6 +94,22 @@ jobs:
             exit 1
           fi
 
+          # Optional domain allowlist — set VPN_ALLOWED_DOMAINS secret to restrict who can be managed.
+          # Format: space-separated domains, e.g. "example.com contractor.io"
+          # Leave unset (or empty) to allow any email address.
+          ALLOWED_DOMAINS="${{ secrets.VPN_ALLOWED_DOMAINS }}"
+          if [[ -n "$USERNAME" && -n "$ALLOWED_DOMAINS" ]]; then
+            DOMAIN="${USERNAME##*@}"
+            MATCH=false
+            for d in $ALLOWED_DOMAINS; do
+              [[ "$DOMAIN" == "$d" ]] && MATCH=true && break
+            done
+            if [[ "$MATCH" != "true" ]]; then
+              echo "::error::Username '$USERNAME' is not from an allowed domain. Allowed: $ALLOWED_DOMAINS"
+              exit 1
+            fi
+          fi
+
           if [[ -n "$ROUTE" ]] && ! [[ "$ROUTE" =~ ^[a-zA-Z0-9./:_-]{2,100}$ ]]; then
             echo "::error::Invalid route format: '$ROUTE'"
             exit 1
@@ -93,14 +121,9 @@ jobs:
           mkdir -p ~/.ssh
           echo "${{ secrets.VPN_SSH_KEY }}" > ~/.ssh/vpn_key
           chmod 600 ~/.ssh/vpn_key
-          ssh-keyscan -p "${{ secrets.VPN_SSH_PORT || '22' }}" \
-            "${{ secrets.VPN_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+          ssh-keyscan -p "$VPN_SSH_PORT" "$VPN_HOST" >> ~/.ssh/known_hosts 2>/dev/null
 
       - name: Write SSH wrapper
-        env:
-          VPN_HOST:     ${{ secrets.VPN_HOST }}
-          VPN_SSH_USER: ${{ secrets.VPN_SSH_USER }}
-          VPN_SSH_PORT: ${{ secrets.VPN_SSH_PORT || '22' }}
         run: |
           cat > /tmp/vpn-ssh << 'EOF'
           #!/bin/bash
@@ -116,11 +139,7 @@ jobs:
       - name: add-user
         if: inputs.action == 'add-user'
         env:
-          VPN_HOST:        ${{ secrets.VPN_HOST }}
-          VPN_SSH_USER:    ${{ secrets.VPN_SSH_USER }}
-          VPN_SSH_PORT:    ${{ secrets.VPN_SSH_PORT || '22' }}
-          VPN_CONTAINER:   ${{ secrets.VPN_CONTAINER_NAME || 'openvpn' }}
-          VPN_SERVER_NAME: ${{ secrets.VPN_SERVER_NAME }}
+          VPN_SERVER_NAME: ${{ secrets.VPN_SERVER_NAME || secrets.VPN_HOST }}
           VPN_TOTP_ISSUER: ${{ secrets.VPN_TOTP_ISSUER || 'VPN' }}
         run: |
           /tmp/vpn-ssh "sudo docker exec \
@@ -131,21 +150,12 @@ jobs:
 
       - name: revoke-user
         if: inputs.action == 'revoke-user'
-        env:
-          VPN_HOST:      ${{ secrets.VPN_HOST }}
-          VPN_SSH_USER:  ${{ secrets.VPN_SSH_USER }}
-          VPN_SSH_PORT:  ${{ secrets.VPN_SSH_PORT || '22' }}
-          VPN_CONTAINER: ${{ secrets.VPN_CONTAINER_NAME || 'openvpn' }}
         run: |
           /tmp/vpn-ssh "sudo docker exec '$VPN_CONTAINER' vpn-revoke-user '${{ inputs.username }}'"
 
       - name: regen-totp
         if: inputs.action == 'regen-totp'
         env:
-          VPN_HOST:        ${{ secrets.VPN_HOST }}
-          VPN_SSH_USER:    ${{ secrets.VPN_SSH_USER }}
-          VPN_SSH_PORT:    ${{ secrets.VPN_SSH_PORT || '22' }}
-          VPN_CONTAINER:   ${{ secrets.VPN_CONTAINER_NAME || 'openvpn' }}
           VPN_TOTP_ISSUER: ${{ secrets.VPN_TOTP_ISSUER || 'VPN' }}
         run: |
           /tmp/vpn-ssh "sudo docker exec \
@@ -155,11 +165,6 @@ jobs:
 
       - name: list-users
         if: inputs.action == 'list-users'
-        env:
-          VPN_HOST:      ${{ secrets.VPN_HOST }}
-          VPN_SSH_USER:  ${{ secrets.VPN_SSH_USER }}
-          VPN_SSH_PORT:  ${{ secrets.VPN_SSH_PORT || '22' }}
-          VPN_CONTAINER: ${{ secrets.VPN_CONTAINER_NAME || 'openvpn' }}
         run: |
           echo "### VPN Users" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -167,25 +172,53 @@ jobs:
             | tee -a "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
 
-      # ── 3. Profile retrieval (add-user + get-profile) ────────────────────────
+      # ── 3. Profile regeneration + retrieval ──────────────────────────────────
+      - name: regen-profile
+        if: inputs.action == 'regen-profile'
+        env:
+          VPN_SERVER_NAME: ${{ secrets.VPN_SERVER_NAME || secrets.VPN_HOST }}
+          VPN_TOTP_ISSUER: ${{ secrets.VPN_TOTP_ISSUER || 'VPN' }}
+        run: |
+          USERNAME="${{ inputs.username }}"
+          for t in full split; do
+            /tmp/vpn-ssh "sudo docker exec \
+              -e SERVER_NAME='$VPN_SERVER_NAME' \
+              -e TOTP_ISSUER='$VPN_TOTP_ISSUER' \
+              '$VPN_CONTAINER' \
+              /etc/openvpn/scripts/gen-client-config.sh '$USERNAME' $t"
+          done
+
       - name: Retrieve .ovpn profiles
         id: profile
-        if: inputs.action == 'add-user' || inputs.action == 'get-profile'
+        if: >-
+          inputs.action == 'add-user'      ||
+          inputs.action == 'get-profile'   ||
+          inputs.action == 'regen-profile' ||
+          inputs.action == 'regen-totp'
         env:
-          VPN_HOST:      ${{ secrets.VPN_HOST }}
-          VPN_SSH_USER:  ${{ secrets.VPN_SSH_USER }}
-          VPN_SSH_PORT:  ${{ secrets.VPN_SSH_PORT || '22' }}
-          VPN_CONTAINER: ${{ secrets.VPN_CONTAINER_NAME || 'openvpn' }}
-          # add-user always fetches both; get-profile respects tunnel_type input
-          TUNNEL_TYPE:   ${{ inputs.action == 'add-user' && 'both' || inputs.tunnel_type || 'both' }}
+          TUNNEL_TYPE: ${{ (inputs.action == 'add-user' || inputs.action == 'regen-totp' || inputs.action == 'regen-profile') && 'both' || inputs.tunnel_type || 'both' }}
+          VPN_SERVER_NAME: ${{ secrets.VPN_SERVER_NAME || secrets.VPN_HOST }}
+          VPN_TOTP_ISSUER: ${{ secrets.VPN_TOTP_ISSUER || 'VPN' }}
         run: |
           mkdir -p /tmp/vpn-profile
           USERNAME="${{ inputs.username }}"
+          ACTION="${{ inputs.action }}"
+
+          # For get-profile, regenerate on-the-fly so the profile always reflects
+          # the latest script (reneg-sec, FRIENDLY_NAME, etc.)
+          if [[ "$ACTION" == "get-profile" ]]; then
+            for t in full split; do
+              /tmp/vpn-ssh "sudo docker exec \
+                -e SERVER_NAME='$VPN_SERVER_NAME' \
+                -e TOTP_ISSUER='$VPN_TOTP_ISSUER' \
+                '$VPN_CONTAINER' \
+                /etc/openvpn/scripts/gen-client-config.sh '$USERNAME' $t"
+            done
+          fi
 
           download() {
             local t="$1"
-            /tmp/vpn-ssh \
-              "sudo docker exec '$VPN_CONTAINER' cat \"/data/clients/${USERNAME}-${t}.ovpn\"" \
+            /tmp/vpn-ssh "sudo docker exec '$VPN_CONTAINER' cat \"/data/clients/${USERNAME}-${t}.ovpn\"" \
               > "/tmp/vpn-profile/${USERNAME}-${t}.ovpn"
             echo "Downloaded ${t} profile"
           }
@@ -199,22 +232,18 @@ jobs:
           echo "dir=/tmp/vpn-profile" >> "$GITHUB_OUTPUT"
 
       - name: Upload profile artifacts
-        if: inputs.action == 'add-user' || inputs.action == 'get-profile'
+        if: inputs.action == 'add-user' || inputs.action == 'get-profile' || inputs.action == 'regen-profile'
         uses: actions/upload-artifact@v4
         with:
           name: vpn-profiles---${{ inputs.username }}
           path: ${{ steps.profile.outputs.dir }}
           retention-days: 1
 
-      # ── 4. TOTP retrieval + email (add-user + regen-totp) ────────────────────
+      # ── 4. TOTP retrieval (add-user + regen-totp) ────────────────────────────
       - name: Retrieve TOTP secret
         id: totp
         if: inputs.action == 'add-user' || inputs.action == 'regen-totp'
         env:
-          VPN_HOST:        ${{ secrets.VPN_HOST }}
-          VPN_SSH_USER:    ${{ secrets.VPN_SSH_USER }}
-          VPN_SSH_PORT:    ${{ secrets.VPN_SSH_PORT || '22' }}
-          VPN_CONTAINER:   ${{ secrets.VPN_CONTAINER_NAME || 'openvpn' }}
           VPN_TOTP_ISSUER: ${{ secrets.VPN_TOTP_ISSUER || 'VPN' }}
         run: |
           SECRET=$(/tmp/vpn-ssh \
@@ -223,61 +252,282 @@ jobs:
           echo "secret=$SECRET"   >> "$GITHUB_OUTPUT"
           echo "otp_uri=$OTP_URI" >> "$GITHUB_OUTPUT"
 
-      - name: Send TOTP setup email via SES
-        if: (inputs.action == 'add-user' || inputs.action == 'regen-totp') && secrets.SES_FROM_EMAIL != ''
+      # ── 5. Email (requires SES_FROM_EMAIL + AWS credentials) ─────────────────
+      - name: Install email dependencies
+        if: >-
+          secrets.SES_FROM_EMAIL != '' && (
+            inputs.action == 'add-user'      ||
+            inputs.action == 'regen-totp'    ||
+            inputs.action == 'revoke-user'   ||
+            inputs.action == 'regen-profile'
+          )
+        run: pip install -q "qrcode[pil]"
+
+      - name: Configure AWS credentials (OIDC)
+        if: secrets.VPN_AWS_ROLE_ARN != ''
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.VPN_AWS_ROLE_ARN }}
+          role-session-name: vpn-${{ github.run_id }}
+          aws-region: ${{ secrets.VPN_AWS_REGION || 'us-east-1' }}
+
+      - name: Send email via SES
+        if: >-
+          secrets.SES_FROM_EMAIL != '' && (
+            inputs.action == 'add-user'      ||
+            inputs.action == 'regen-totp'    ||
+            inputs.action == 'revoke-user'   ||
+            inputs.action == 'regen-profile'
+          )
         env:
-          AWS_ACCESS_KEY_ID:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          AWS_DEFAULT_REGION:    ${{ secrets.AWS_REGION || 'us-east-1' }}
-          VPN_SERVER_NAME:       ${{ secrets.VPN_SERVER_NAME }}
-          VPN_TOTP_ISSUER:       ${{ secrets.VPN_TOTP_ISSUER || 'VPN' }}
-          SES_FROM_EMAIL:        ${{ secrets.SES_FROM_EMAIL }}
-          TOTP_SECRET:           ${{ steps.totp.outputs.secret }}
-          OTP_URI:               ${{ steps.totp.outputs.otp_uri }}
+          VPN_SERVER_NAME: ${{ secrets.VPN_SERVER_NAME || secrets.VPN_HOST }}
+          VPN_TOTP_ISSUER: ${{ secrets.VPN_TOTP_ISSUER || 'VPN' }}
+          SES_FROM_EMAIL:  ${{ secrets.SES_FROM_EMAIL }}
+          TOTP_SECRET:     ${{ steps.totp.outputs.secret || '' }}
+          OTP_URI:         ${{ steps.totp.outputs.otp_uri || '' }}
         run: |
-          USERNAME="${{ inputs.username }}"
-          ACTION="${{ inputs.action }}"
-          SUBJECT="Your VPN $( [[ "$ACTION" == 'regen-totp' ]] && echo 'TOTP regenerated' || echo 'access setup' ) — ${VPN_SERVER_NAME}"
-          BODY="Hello,
+          python3 << 'PYEOF'
+          import base64, email.mime.application, email.mime.image
+          import email.mime.multipart, email.mime.text
+          import io, json, os, subprocess, textwrap
+          import qrcode
 
-$( [[ "$ACTION" == 'add-user' ]] && echo "Your VPN account on ${VPN_SERVER_NAME} is ready." || echo "Your TOTP code has been regenerated on ${VPN_SERVER_NAME}." )
+          action    = "${{ inputs.action }}"
+          username  = "${{ inputs.username }}"
+          server    = os.environ["VPN_SERVER_NAME"]
+          issuer    = os.environ["VPN_TOTP_ISSUER"]
+          from_addr = os.environ["SES_FROM_EMAIL"]
+          secret    = os.environ.get("TOTP_SECRET", "")
+          otp_uri   = os.environ.get("OTP_URI", "")
 
-━━ MFA / TOTP Setup ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          # ── QR code (CID-embedded — works in Gmail) ───────────────────────────
+          if otp_uri:
+              qr_buf = io.BytesIO()
+              qrcode.make(otp_uri).save(qr_buf, format="PNG")
+              qr_data = qr_buf.getvalue()
+              qr_img  = '<img src="cid:totp-qr" width="200" height="200" alt="Scan with your authenticator app" style="display:block;margin:12px 0;border:1px solid #e0e0e0;border-radius:4px;" />'
+          else:
+              qr_data = None
+              qr_img  = ""
 
-1. Open Google Authenticator, Authy, or any TOTP app.
-2. Add account — choose one method:
+          # ── Subject ────────────────────────────────────────────────────────────
+          subjects = {
+              "add-user":      f"Welcome to {server} VPN — action required",
+              "regen-totp":    f"Your {server} VPN authenticator has been reset",
+              "revoke-user":   f"Your {server} VPN access has been revoked",
+              "regen-profile": f"Your {server} VPN profile has been regenerated",
+          }
+          subject = subjects[action]
 
-   Scan QR (paste URI into authenticator's manual entry or https://qr.io):
-     ${OTP_URI}
+          # ── CSS ───────────────────────────────────────────────────────────────
+          STYLE = """
+            body { margin:0; padding:0; background:#f4f4f4; font-family:Arial,sans-serif; }
+            .wrap { max-width:600px; margin:32px auto; background:#fff;
+                    border-radius:6px; overflow:hidden;
+                    box-shadow:0 2px 8px rgba(0,0,0,.08); }
+            .header { background:#1a1a2e; color:#fff; padding:28px 32px; }
+            .header h1 { margin:0; font-size:22px; font-weight:700; }
+            .header p  { margin:6px 0 0; font-size:14px; color:#aab; }
+            .body   { padding:28px 32px; color:#333; font-size:15px; line-height:1.6; }
+            .section { background:#f8f8fb; border-left:4px solid #4f46e5;
+                       border-radius:4px; padding:16px 20px; margin:20px 0; }
+            .section h3 { margin:0 0 12px; font-size:15px; color:#1a1a2e; }
+            .kv   { font-family:monospace; font-size:13px; }
+            .kv td { padding:3px 12px 3px 0; vertical-align:top; }
+            .kv .k { color:#888; white-space:nowrap; }
+            .kv .v { color:#1a1a2e; word-break:break-all; }
+            .steps ol { margin:8px 0; padding-left:20px; }
+            .steps li { margin-bottom:6px; }
+            .warning { background:#fff8e1; border-left:4px solid #f59e0b;
+                       border-radius:4px; padding:12px 16px; margin:20px 0;
+                       font-size:14px; color:#92400e; }
+            .footer { padding:18px 32px; background:#f4f4f4; font-size:12px;
+                      color:#999; border-top:1px solid #e8e8e8; }
+          """
 
-   Manual entry:
-     Issuer : ${VPN_TOTP_ISSUER}
-     Account: ${USERNAME}
-     Secret : ${TOTP_SECRET}
-     Type   : Time-based (TOTP), 6 digits, 30 s interval
+          def totp_section(heading):
+              return f"""
+              <div class="section">
+                <h3>&#128274; {heading}</h3>
+                <p style="margin:0 0 12px;font-size:14px;">Scan the QR code with <strong>Google Authenticator</strong>, Authy, 1Password, or any TOTP app — or enter the secret manually:</p>
+                {qr_img}
+                <table class="kv"><tbody>
+                  <tr><td class="k">Issuer&nbsp;</td><td class="v">{issuer}</td></tr>
+                  <tr><td class="k">Account</td><td class="v">{username}</td></tr>
+                  <tr><td class="k">Secret&nbsp;</td><td class="v"><strong>{secret}</strong></td></tr>
+                  <tr><td class="k">Type&nbsp;&nbsp;&nbsp;</td><td class="v">Time-based (TOTP) &middot; 6 digits &middot; 30 s</td></tr>
+                </tbody></table>
+              </div>"""
 
-━━ Connecting ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+          def connect_section():
+              return f"""
+              <div class="section">
+                <h3>&#127758; Connecting</h3>
+                <div class="steps"><ol>
+                  <li>Import the attached <strong>.ovpn profile</strong> into your VPN client.</li>
+                  <li>When prompted, enter:
+                    <table class="kv" style="margin-top:6px"><tbody>
+                      <tr><td class="k">Username</td><td class="v">{username}</td></tr>
+                      <tr><td class="k">Password</td><td class="v">6-digit code from your authenticator app</td></tr>
+                    </tbody></table>
+                  </li>
+                  <li>The code refreshes every 30 seconds. If refused, wait for the next code and retry.</li>
+                </ol></div>
+              </div>"""
 
-$( [[ "$ACTION" == 'add-user' ]] && echo "Your .ovpn profile is attached as a 1-day artifact on the GitHub Actions run." )
-Username : ${USERNAME}
-Password : 6-digit code from your authenticator app
+          # ── Per-action bodies ─────────────────────────────────────────────────
+          if action == "add-user":
+              body_html = f"""
+                <p>Your <strong>{server}</strong> VPN account has been created.
+                   Complete the steps below to start connecting.</p>
+                {totp_section("Step 1 — Set up multi-factor authentication")}
+                {connect_section()}"""
+              body_text = textwrap.dedent(f"""
+                Your {server} VPN account is ready.
 
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-This message is confidential. Do not forward."
-          aws ses send-email \
-            --from  "$SES_FROM_EMAIL" \
-            --destination "ToAddresses=$USERNAME" \
-            --message "Subject={Data=${SUBJECT},Charset=UTF-8},Body={Text={Data=${BODY},Charset=UTF-8}}"
-          echo "::notice::TOTP setup email sent to ${USERNAME}"
+                ── MFA / TOTP Setup ──────────────────────────────────────
+                Open any TOTP app (Google Authenticator, Authy, 1Password) and add:
 
-      # ── 5. Route management ──────────────────────────────────────────────────
+                  Issuer  : {issuer}
+                  Account : {username}
+                  Secret  : {secret}
+                  Type    : Time-based (TOTP), 6 digits, 30 s
+
+                  otpauth URI: {otp_uri}
+
+                ── Connecting ────────────────────────────────────────────
+                1. Import the attached .ovpn profile into your VPN client.
+                2. Username : {username}
+                   Password : 6-digit TOTP code from your authenticator app
+              """).strip()
+
+          elif action == "regen-totp":
+              body_html = f"""
+                <p>Your <strong>{server}</strong> VPN authenticator secret has been regenerated.
+                   Your old code <strong>no longer works</strong> — set up the new one now.</p>
+                {totp_section("Set up your new authenticator")}
+                <div class="warning">
+                  &#9888; Remove the old <strong>{issuer}</strong> entry from your authenticator app
+                  before adding the new one to avoid confusion.
+                </div>
+                {connect_section()}"""
+              body_text = textwrap.dedent(f"""
+                Your {server} VPN authenticator has been reset.
+                Your old TOTP code no longer works.
+
+                ── New MFA / TOTP Setup ──────────────────────────────────
+                Open your TOTP app and REPLACE the old {issuer} entry with:
+
+                  Issuer  : {issuer}
+                  Account : {username}
+                  Secret  : {secret}
+                  Type    : Time-based (TOTP), 6 digits, 30 s
+
+                  otpauth URI: {otp_uri}
+
+                Your .ovpn profile is unchanged — it is attached for convenience.
+              """).strip()
+
+          elif action == "regen-profile":
+              body_html = f"""
+                <p>Your <strong>{server}</strong> VPN profile has been regenerated.
+                   Please replace your existing profile with the one attached.</p>
+                {connect_section()}"""
+              body_text = textwrap.dedent(f"""
+                Your {server} VPN profile has been regenerated.
+
+                ── What to do ───────────────────────────────────────────
+                1. Download the attached .ovpn profile.
+                2. Remove your old profile from your VPN client.
+                3. Import the new profile.
+                4. Username : {username}
+                   Password : 6-digit TOTP code from your authenticator app
+                   (your authenticator secret is unchanged)
+              """).strip()
+
+          elif action == "revoke-user":
+              body_html = f"""
+                <p>Your access to the <strong>{server}</strong> VPN has been <strong>revoked</strong>.</p>
+                <div class="section">
+                  <h3>What this means</h3>
+                  <ul style="margin:0;padding-left:20px">
+                    <li>Your certificate has been added to the revocation list.</li>
+                    <li>Any active sessions will be dropped on the next keepalive.</li>
+                    <li>Your .ovpn profile and TOTP secret are no longer valid.</li>
+                  </ul>
+                </div>
+                <p>If you believe this was done in error, please contact your administrator.</p>"""
+              body_text = textwrap.dedent(f"""
+                Your {server} VPN access has been revoked.
+
+                Your certificate has been added to the revocation list.
+                Any active sessions will be dropped on the next keepalive.
+                Your .ovpn profile and TOTP secret are no longer valid.
+
+                If this was done in error, contact your administrator.
+              """).strip()
+
+          # ── Assemble HTML ─────────────────────────────────────────────────────
+          html = f"""<!DOCTYPE html>
+          <html><head><meta charset="UTF-8"><style>{STYLE}</style></head>
+          <body><div class="wrap">
+            <div class="header"><h1>{subject}</h1><p>{server} VPN</p></div>
+            <div class="body">{body_html}</div>
+            <div class="footer">This message is confidential. Do not forward or share your credentials.</div>
+          </div></body></html>"""
+
+          # ── Build MIME message ─────────────────────────────────────────────────
+          outer    = email.mime.multipart.MIMEMultipart("mixed")
+          outer["Subject"] = subject
+          outer["From"]    = from_addr
+          outer["To"]      = username
+
+          related  = email.mime.multipart.MIMEMultipart("related")
+          alt      = email.mime.multipart.MIMEMultipart("alternative")
+          alt.attach(email.mime.text.MIMEText(body_text, "plain", "utf-8"))
+          alt.attach(email.mime.text.MIMEText(html,      "html",  "utf-8"))
+          related.attach(alt)
+
+          if qr_data:
+              img_part = email.mime.image.MIMEImage(qr_data, "png")
+              img_part.add_header("Content-ID", "<totp-qr>")
+              img_part.add_header("Content-Disposition", "inline", filename="totp-qr.png")
+              related.attach(img_part)
+
+          outer.attach(related)
+
+          # Attach .ovpn profiles if present
+          profile_dir = "/tmp/vpn-profile"
+          if os.path.isdir(profile_dir):
+              for fname in sorted(os.listdir(profile_dir)):
+                  if fname.endswith(".ovpn"):
+                      with open(os.path.join(profile_dir, fname), "rb") as f:
+                          data = f.read()
+                      part = email.mime.application.MIMEApplication(data, "x-openvpn-profile")
+                      part.add_header("Content-Disposition", "attachment", filename=fname)
+                      outer.attach(part)
+
+          # ── Send via SES send-raw-email ────────────────────────────────────────
+          raw_b64 = base64.b64encode(outer.as_bytes()).decode()
+          with open("/tmp/ses-raw.json", "w") as f:
+              json.dump({"Data": raw_b64}, f)
+
+          result = subprocess.run([
+              "aws", "ses", "send-raw-email",
+              "--source",      from_addr,
+              "--raw-message", "file:///tmp/ses-raw.json",
+          ], capture_output=True, text=True)
+
+          if result.returncode != 0:
+              print(f"::error::SES send failed: {result.stderr}")
+              raise SystemExit(1)
+
+          print(f"::notice::Email ({action}) sent to {username}")
+          PYEOF
+
+      # ── 6. Route management ──────────────────────────────────────────────────
       - name: list-routes
         if: inputs.action == 'list-routes'
-        env:
-          VPN_HOST:       ${{ secrets.VPN_HOST }}
-          VPN_SSH_USER:   ${{ secrets.VPN_SSH_USER }}
-          VPN_SSH_PORT:   ${{ secrets.VPN_SSH_PORT || '22' }}
-          VPN_REMOTE_DIR: ${{ secrets.VPN_REMOTE_DIR || '/opt/openvpn' }}
         run: |
           echo "### routes.conf" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -287,25 +537,15 @@ This message is confidential. Do not forward."
 
       - name: add-route
         if: inputs.action == 'add-route'
-        env:
-          VPN_HOST:       ${{ secrets.VPN_HOST }}
-          VPN_SSH_USER:   ${{ secrets.VPN_SSH_USER }}
-          VPN_SSH_PORT:   ${{ secrets.VPN_SSH_PORT || '22' }}
-          VPN_REMOTE_DIR: ${{ secrets.VPN_REMOTE_DIR || '/opt/openvpn' }}
-          ROUTE:          ${{ inputs.route }}
         run: |
+          ROUTE="${{ inputs.route }}"
           /tmp/vpn-ssh "echo '$ROUTE' >> '$VPN_REMOTE_DIR/config/routes.conf'"
           echo "::notice::Route added: $ROUTE (takes effect on next client reconnect)"
 
       - name: remove-route
         if: inputs.action == 'remove-route'
-        env:
-          VPN_HOST:       ${{ secrets.VPN_HOST }}
-          VPN_SSH_USER:   ${{ secrets.VPN_SSH_USER }}
-          VPN_SSH_PORT:   ${{ secrets.VPN_SSH_PORT || '22' }}
-          VPN_REMOTE_DIR: ${{ secrets.VPN_REMOTE_DIR || '/opt/openvpn' }}
-          ROUTE:          ${{ inputs.route }}
         run: |
+          ROUTE="${{ inputs.route }}"
           /tmp/vpn-ssh "
             TMP=\$(mktemp)
             grep -vF '$ROUTE' '$VPN_REMOTE_DIR/config/routes.conf' > \"\$TMP\" || true
@@ -314,14 +554,9 @@ This message is confidential. Do not forward."
           "
           echo "::notice::Route removed: $ROUTE (takes effect on next client reconnect)"
 
-      # ── 6. Server actions ────────────────────────────────────────────────────
+      # ── 7. Server actions ────────────────────────────────────────────────────
       - name: status
         if: inputs.action == 'status'
-        env:
-          VPN_HOST:       ${{ secrets.VPN_HOST }}
-          VPN_SSH_USER:   ${{ secrets.VPN_SSH_USER }}
-          VPN_SSH_PORT:   ${{ secrets.VPN_SSH_PORT || '22' }}
-          VPN_REMOTE_DIR: ${{ secrets.VPN_REMOTE_DIR || '/opt/openvpn' }}
         run: |
           echo "### Container Status" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
@@ -331,20 +566,15 @@ This message is confidential. Do not forward."
 
       - name: restart
         if: inputs.action == 'restart'
-        env:
-          VPN_HOST:       ${{ secrets.VPN_HOST }}
-          VPN_SSH_USER:   ${{ secrets.VPN_SSH_USER }}
-          VPN_SSH_PORT:   ${{ secrets.VPN_SSH_PORT || '22' }}
-          VPN_REMOTE_DIR: ${{ secrets.VPN_REMOTE_DIR || '/opt/openvpn' }}
         run: |
           /tmp/vpn-ssh "sudo docker compose -f '$VPN_REMOTE_DIR/docker-compose.yml' restart"
           echo "::notice::Container restarted"
 
-      # ── 7. Job summary ───────────────────────────────────────────────────────
+      # ── 8. Job summary ───────────────────────────────────────────────────────
       - name: Job summary
         if: always()
         env:
-          VPN_SERVER_NAME: ${{ secrets.VPN_SERVER_NAME }}
+          VPN_SERVER_NAME: ${{ secrets.VPN_SERVER_NAME || secrets.VPN_HOST }}
           TOTP_SECRET:     ${{ steps.totp.outputs.secret || '' }}
           OTP_URI:         ${{ steps.totp.outputs.otp_uri || '' }}
         run: |
@@ -379,7 +609,7 @@ This message is confidential. Do not forward."
                 echo "URI    : ${OTP_URI}"
                 echo '```'
                 ;;
-              get-profile)
+              get-profile|regen-profile)
                 echo "Artifact \`vpn-profiles---${USERNAME}\` (expires 24 h)."
                 ;;
               list-users|list-routes|status)
@@ -393,6 +623,159 @@ This message is confidential. Do not forward."
                 ;;
             esac
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # ── 9. S3 backup (requires VPN_S3_PATH secret) ───────────────────────────
+      - name: Backup config to S3
+        if: always() && secrets.VPN_S3_PATH != ''
+        run: |
+          TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          S3="${{ secrets.VPN_S3_PATH }}"
+
+          aws s3 cp "$S3/config/routes.conf" \
+            "$S3/config/archive/routes.conf.${TIMESTAMP}" 2>/dev/null || true
+
+          /tmp/vpn-ssh "cat '$VPN_REMOTE_DIR/config/routes.conf'" \
+            | aws s3 cp - "$S3/config/routes.conf" --content-type text/plain
+
+      - name: Backup user data to S3
+        if: always() && secrets.VPN_S3_PATH != ''
+        run: |
+          TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
+          S3="${{ secrets.VPN_S3_PATH }}"
+
+          /tmp/vpn-ssh "sudo docker exec '$VPN_CONTAINER' tar czf - \
+            /data/pki /data/users /data/clients /data/ccd \
+            /data/server.conf /data/ipp.txt 2>/dev/null" \
+            > /tmp/vpn-data.tar.gz
+
+          aws s3 cp /tmp/vpn-data.tar.gz "$S3/data/archive/${TIMESTAMP}.tar.gz"
+          aws s3 cp /tmp/vpn-data.tar.gz "$S3/data/latest.tar.gz"
+          rm -f /tmp/vpn-data.tar.gz
+
+      - name: Sync user files to S3
+        if: >-
+          secrets.VPN_S3_PATH != '' && (
+            inputs.action == 'add-user'      ||
+            inputs.action == 'revoke-user'   ||
+            inputs.action == 'regen-totp'    ||
+            inputs.action == 'regen-profile'
+          )
+        run: |
+          USERNAME="${{ inputs.username }}"
+          S3="${{ secrets.VPN_S3_PATH }}"
+          TIMESTAMP=$(date -u +%Y%m%dT%H%M%SZ)
+
+          case "${{ inputs.action }}" in
+
+            add-user)
+              for tunnel in full split; do
+                f="/tmp/vpn-profile/${USERNAME}-${tunnel}.ovpn"
+                [[ -f "$f" ]] && aws s3 cp "$f" "$S3/users/${USERNAME}/${USERNAME}-${tunnel}.ovpn"
+              done
+              /tmp/vpn-ssh "sudo docker exec '$VPN_CONTAINER' cat '/data/users/${USERNAME}/totp.secret'" \
+                | aws s3 cp - "$S3/users/${USERNAME}/totp.secret" --content-type text/plain
+              ;;
+
+            regen-profile)
+              for tunnel in full split; do
+                f="/tmp/vpn-profile/${USERNAME}-${tunnel}.ovpn"
+                if [[ -f "$f" ]]; then
+                  aws s3 cp "$S3/users/${USERNAME}/${USERNAME}-${tunnel}.ovpn" \
+                    "$S3/users/${USERNAME}/archive/${USERNAME}-${tunnel}.ovpn.${TIMESTAMP}" 2>/dev/null || true
+                  aws s3 cp "$f" "$S3/users/${USERNAME}/${USERNAME}-${tunnel}.ovpn"
+                fi
+              done
+              /tmp/vpn-ssh "sudo docker exec '$VPN_CONTAINER' cat '/data/users/${USERNAME}/totp.secret'" \
+                | aws s3 cp - "$S3/users/${USERNAME}/totp.secret" --content-type text/plain
+              ;;
+
+            regen-totp)
+              aws s3 cp "$S3/users/${USERNAME}/totp.secret" \
+                "$S3/users/${USERNAME}/archive/totp.secret.${TIMESTAMP}" 2>/dev/null || true
+              /tmp/vpn-ssh "sudo docker exec '$VPN_CONTAINER' cat '/data/users/${USERNAME}/totp.secret'" \
+                | aws s3 cp - "$S3/users/${USERNAME}/totp.secret" --content-type text/plain
+              ;;
+
+            revoke-user)
+              aws s3 mv "$S3/users/${USERNAME}/" \
+                "$S3/users/_revoked/${USERNAME}/" \
+                --recursive 2>/dev/null || true
+              ;;
+
+          esac
+
+      - name: Update status.json in S3
+        if: always() && secrets.VPN_S3_PATH != ''
+        env:
+          GH_ACTION:   ${{ inputs.action }}
+          GH_USERNAME: ${{ inputs.username }}
+          GH_ACTOR:    ${{ github.actor }}
+          GH_RUN_ID:   ${{ github.run_id }}
+          GH_RUN_URL:  ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          VPN_SERVER_NAME: ${{ secrets.VPN_SERVER_NAME || secrets.VPN_HOST }}
+        run: |
+          /tmp/vpn-ssh "sudo docker exec '$VPN_CONTAINER' vpn-list-users 2>/dev/null" \
+            > /tmp/vpn-users.txt || true
+          /tmp/vpn-ssh "cat '$VPN_REMOTE_DIR/config/routes.conf' 2>/dev/null" \
+            > /tmp/vpn-routes.txt || true
+
+          python3 << 'PYEOF'
+          import json, os
+          from datetime import datetime, timezone
+
+          with open("/tmp/vpn-users.txt") as f:
+              users_raw = f.read()
+          with open("/tmp/vpn-routes.txt") as f:
+              routes_raw = f.read()
+
+          users = []
+          for line in users_raw.splitlines():
+              if not line.strip() or line.startswith("USERNAME") or line.startswith("---"):
+                  continue
+              parts = line.split()
+              if len(parts) < 2:
+                  continue
+              cn, status = parts[0], parts[1]
+              expires = " ".join(parts[7:12]) if len(parts) >= 12 else ""
+              users.append({
+                  "username": cn,
+                  "status":   status,
+                  "mfa":      "[MFA]" in line,
+                  "expires":  expires,
+              })
+
+          routes = [
+              l.strip() for l in routes_raw.splitlines()
+              if l.strip() and not l.strip().startswith("#") and l.strip() != "\\"
+          ]
+
+          doc = {
+              "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+              "last_action": {
+                  "action":   os.environ["GH_ACTION"],
+                  "username": os.environ["GH_USERNAME"] or None,
+                  "actor":    os.environ["GH_ACTOR"],
+                  "run_id":   os.environ["GH_RUN_ID"],
+                  "run_url":  os.environ["GH_RUN_URL"],
+              },
+              "server": os.environ["VPN_SERVER_NAME"],
+              "stats": {
+                  "total_users":  len(users),
+                  "active":       sum(1 for u in users if u["status"] == "VALID"),
+                  "revoked":      sum(1 for u in users if u["status"] == "REVOKED"),
+                  "total_routes": len(routes),
+              },
+              "users":  users,
+              "routes": routes,
+          }
+
+          with open("/tmp/vpn-status.json", "w") as f:
+              json.dump(doc, f, indent=2)
+          PYEOF
+
+          aws s3 cp /tmp/vpn-status.json "${{ secrets.VPN_S3_PATH }}/status.json" \
+            --content-type application/json
+          rm -f /tmp/vpn-users.txt /tmp/vpn-routes.txt /tmp/vpn-status.json
 
       # ── Cleanup ───────────────────────────────────────────────────────────────
       - name: Cleanup SSH key

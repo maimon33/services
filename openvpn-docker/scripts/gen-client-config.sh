@@ -59,7 +59,7 @@ setenv FRIENDLY_NAME "${DISPLAY_NAME}"
 
 client
 dev tun
-proto ${OPENVPN_PROTO}
+proto udp
 remote ${SERVER_NAME} ${OPENVPN_PORT}
 resolv-retry infinite
 nobind
@@ -75,6 +75,11 @@ verify-x509-name server name
 cipher AES-256-GCM
 auth   SHA256
 tls-version-min 1.2
+
+# Renegotiate data channel key every 24h (default is 1h).
+# With TOTP auth, hourly rekey triggers re-authentication which the client
+# cannot complete silently and causes a disconnect. Must be set on both sides.
+reneg-sec 86400
 
 ${SPLIT_TUNNEL_OPTION}
 
